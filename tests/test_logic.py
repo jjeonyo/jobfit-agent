@@ -105,3 +105,83 @@ def test_verifier_marks_unverified_after_max_attempts():
 def test_report_defaults():
     report = Report()
     assert report.matches == [] and report.llm_calls == 0
+
+
+def _verdict_case(gold_verdicts, predicted, unverified=()):
+    """gold_verdicts: [(verdict, citations)], predicted: [(verdict, citations) | None]."""
+    texts = [f"요건 문장 {chr(0xAC00 + i * 100)}{i}" for i in range(len(gold_verdicts))]
+    gold = [
+        {"id": f"g-{i}", "text": t, "verdict": v, "citations": c}
+        for i, (t, (v, c)) in enumerate(zip(texts, gold_verdicts))
+    ]
+    requirements = [{"id": f"req-{i}", "text": t} for i, t in enumerate(texts)]
+    matches = [
+        {"requirement_id": f"req-{i}", "verdict": p[0], "citations": p[1]}
+        for i, p in enumerate(predicted)
+        if p is not None
+    ]
+    return {
+        "id": "case-01",
+        "gold_requirements": gold,
+        "requirements": requirements,
+        "matches": matches,
+        "unverified": list(unverified),
+    }
+
+
+def test_verdict_metrics_confusion_and_fabrication():
+    case = _verdict_case(
+        gold_verdicts=[
+            ("매칭", ["chunk-001"]),
+            ("부분 매칭", ["chunk-002"]),
+            ("없음", []),
+            ("없음", []),
+            ("매칭", ["chunk-003"]),
+        ],
+        predicted=[
+            ("매칭", ["chunk-001"]),  # 정답, 인용 일치
+            ("매칭", ["chunk-004"]),  # 부분 매칭 → 매칭, 인용 불일치
+            ("부분 매칭", ["chunk-001"]),  # 없음 → 부분 매칭 = 지어내기
+            ("없음", []),  # 정답
+            None,  # 미검증
+        ],
+        unverified=["req-4"],
+    )
+    verdict = evaluate([case])["verdict"]
+    assert verdict["labeled"] == 5
+    assert verdict["verdict_accuracy"] == 2 / 5  # 미검증은 오답
+    assert verdict["fabrication_rate"] == 1 / 2
+    assert verdict["unverified"] == 1
+    assert verdict["citation_accuracy"] == 1 / 2
+    assert verdict["confusion"]["없음"]["부분 매칭"] == 1
+    assert verdict["confusion"]["매칭"]["미검증"] == 1
+
+
+def test_verdict_metrics_unmeasurable_is_none_not_zero():
+    case = _verdict_case([("매칭", [])], [("매칭", ["chunk-001"])])
+    verdict = evaluate([case])["verdict"]
+    assert verdict["verdict_accuracy"] == 1.0
+    assert verdict["fabrication_rate"] is None  # 정답 '없음'이 없다
+    assert verdict["citation_accuracy"] is None  # 정답 인용이 없다
+
+
+def test_unlabeled_gold_is_skipped_and_typo_raises():
+    case = _verdict_case([("매칭", [])], [("매칭", [])])
+    del case["gold_requirements"][0]["verdict"]
+    assert evaluate([case])["verdict"]["labeled"] == 0
+    case["gold_requirements"][0]["verdict"] = "매칭 "
+    with pytest.raises(ValueError):
+        evaluate([case])
+
+
+def test_verdict_rules_match_labeling_doc_and_prompt():
+    from pathlib import Path
+
+    from app.agents import MATCHER_PROMPT, VERDICT_RULES
+
+    doc = (Path(__file__).resolve().parent.parent / "docs" / "판정-기준.md").read_text(
+        encoding="utf-8"
+    )
+    for rule in VERDICT_RULES:
+        assert rule in doc
+        assert rule in MATCHER_PROMPT

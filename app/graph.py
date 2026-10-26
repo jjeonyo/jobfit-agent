@@ -14,6 +14,17 @@ from app import agents
 from app.state import AgentState
 
 
+def initial_state(posting_text: str, profile_chunks: list[dict]) -> AgentState:
+    """그래프 입력 상태. API와 평가 예측 스크립트가 같은 초기값을 쓴다."""
+    return {
+        "posting_text": posting_text,
+        "profile_chunks": profile_chunks,
+        "attempts": 0,
+        "blocked_claims": 0,
+        "llm_calls": 0,
+    }
+
+
 def _route_after_verify(state: AgentState) -> str:
     return "retry" if state.get("route") == "retry" else "done"
 

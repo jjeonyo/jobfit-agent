@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from app import agents
-from app.graph import build_graph
+from app.graph import build_graph, initial_state
 from app.profile import load_profile
 from app.schemas import Report
 
@@ -63,15 +63,7 @@ def analyze(request: AnalyzeRequest) -> Report:
     except FileNotFoundError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     try:
-        final_state = _graph.invoke(
-            {
-                "posting_text": request.posting_text,
-                "profile_chunks": profile_chunks,
-                "attempts": 0,
-                "blocked_claims": 0,
-                "llm_calls": 0,
-            }
-        )
+        final_state = _graph.invoke(initial_state(request.posting_text, profile_chunks))
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except agents.LLMOutputError as exc:
