@@ -1,0 +1,1 @@
+{"gold_requirement_ids":["req-01","req-02"],"gold_requirements":[{"category":"필수","id":"req-01","text":"예시 요건 1"},{"category":"우대","id":"req-02","text":"예시 요건 2"}],"id":"example-01","note":"템플릿입니다. 실제 공고 텍스트와 정답 라벨로 교체하세요. 정답 라벨은 직접 작성하고, 애매한 요건은 판정 기준 문서에 기록합니다.","posting_text":"예시 공고 텍스트를 여기에 붙여넣으세요."}
