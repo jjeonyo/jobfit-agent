@@ -65,9 +65,11 @@ Gap Planner는 검증을 통과한 판정만 받는다 (설계 결정 기록 참
 | `app/vectorstore.py` | Supabase pgvector 백엔드 (`VectorStore` 구현). `SUPABASE_URL`·`SUPABASE_KEY`가 있을 때만 켜진다. 이력서 청크를 프로세스당 1회(내용이 바뀌면 다시) 임베딩해 업서트한다. 실패하면 경고 후 키워드 검색으로 진행한다. |
 | `db/supabase.sql` | pgvector 테이블·검색 함수 스키마. Supabase SQL Editor에서 1회 실행한다. |
 | `app/profile.py` | `data/profile.md`를 읽어 근거 청크 목록으로 만든다. 파일이 없으면 템플릿 채우기를 안내하는 에러를 낸다. |
-| `eval/run.py` | 평가 지표 계산 CLI. 예측 JSON과 정답 JSON을 비교해 요건 추출 정확도와 근거 인용률을 낸다. 예측 요건과 정답 요건은 id가 아니라 요건 문장 유사도로 1:1 대응시킨다. |
+| `eval/predict.py` | 정답 파일의 공고마다 파이프라인을 실행해 예측 JSON을 만든다 (실제 LLM 호출). |
+| `eval/run.py` | 평가 지표 계산 CLI. 요건 추출 정확도, 근거 인용률, 판정 정확도, 지어내기율, 인용 정확도, 혼동행렬을 낸다. 예측 요건과 정답 요건은 id가 아니라 요건 문장 유사도로 1:1 대응시킨다. |
 | `tests/` | LLM·네트워크 없이 실행되는 테스트. 스키마 검증, 청킹, 평가 지표 수학, 검증 원장 동작, API 키 없을 때 503 반환, 가짜 LLM으로 그래프 엔드투엔드(재생성·unverified·차단 집계), 하이브리드 가중치, Supabase 요청 형식을 확인한다. |
-| `docs/판정-기준.md` | 평가셋 정답 라벨 작성 기준 (애매하면 '부분 매칭'). |
+| `docs/판정-기준.md` | 평가셋 정답 라벨 작성 기준. Matcher 프롬프트의 판정 기준(`VERDICT_RULES`)과 같은 문장이다. |
+| `docs/개선-기록.md` | 발견한 문제·원인·조치·검증 방법·미해결 항목과 실측 기록. 개선 작업은 여기에 먼저 적는다. |
 | `render.yaml`, `.github/workflows/ci.yml` | Render 배포 Blueprint, CI (테스트 + Docker 빌드). |
 
 ### 데이터 흐름과 인용 규칙
@@ -99,17 +101,19 @@ Gap Planner는 검증을 통과한 판정만 받는다 (설계 결정 기록 참
 - 청킹 (1,000자/중첩 100자), 하이브리드 검색 (벡터 0.9 + 키워드 0.1), 스키마 검증
 - 벡터 검색 백엔드 (Supabase pgvector) — 요청 형식은 테스트로 확인, 실제 Supabase 인스턴스 연결은 미확인
 - 웹 UI (`GET /`) — 가짜 LLM 응답으로 데스크톱·모바일 렌더링 확인
-- 평가 지표 스크립트 (`eval/run.py`), 평가 케이스 템플릿 (`eval/cases/example.json`), 판정 기준 문서 (`docs/판정-기준.md`)
+- 평가: 예측 생성 (`eval/predict.py`), 지표 계산 (`eval/run.py` — 판정 정확도·지어내기율·혼동행렬 포함), 정답 템플릿 (`eval/cases/example.json`), 판정 기준 (`docs/판정-기준.md`)
+- Matcher 프롬프트에 판정 기준 반영 (라벨 기준과 같은 문장, 테스트로 일치 확인)
 - Docker Compose, Render Blueprint (`render.yaml`), GitHub Actions CI (테스트 + Docker 빌드)
 - `data/profile.md` 이력서 원문 (민감 정보 제외)
-- 테스트 34개 통과 (LLM·네트워크 없이)
+- 테스트 40개 통과 (LLM·네트워크 없이)
 
 ### 아직 하지 않은 것 (다음 작업)
 
 - 실제 OpenAI 키로 엔드투엔드 실행: 지금까지는 가짜 LLM으로만 실행했다.
 - 배포: `render.yaml`은 준비돼 있다. Render 계정에서 Blueprint를 연결하고 키를 입력해야 한다.
 - 실제 평가셋 20건: 실제 공고 + 요건·판정 정답 라벨 직접 작성 (`docs/판정-기준.md`).
-- 판정 정확도: 요건 대응은 내용 기준으로 바뀌었지만, 대응한 요건의 판정이 정답과 같은지는 아직 계산하지 않는다.
+- 기준선 측정: 평가셋으로 `eval.predict` → `eval.run`을 실행해 첫 실측값을 기록한다.
+- 미해결 문제와 대응 후보는 [docs/개선-기록.md](docs/개선-기록.md) 참조 (검증 원장이 인용 내용의 뒷받침 여부를 보지 않는 문제 등).
 
 ## 실행 방법
 
@@ -196,13 +200,18 @@ LLM 출력 파싱 실패·LLM 호출 실패 → 502, `OPENAI_API_KEY` 없음 →
 ## 평가 방법
 
 ```bash
+python -m eval.predict --gold eval/cases/gold.json --out eval/preds.json   # OPENAI_API_KEY 필요
 python -m eval.run --pred eval/preds.json --gold eval/cases/gold.json [--threshold 0.5]
 ```
 
 - 요건 추출 정확도 = 정답 요건 중 내용이 대응하는 예측 요건이 있는 비율
 - 근거 인용률 = '매칭/부분 매칭' 판정 중 인용이 붙은 비율 (차단 기준 1.0)
-- 정답 파일 형식은 `eval/cases/example.json`, 예측 파일은 케이스마다 `id` + `/analyze` 응답의
-  `requirements`·`matches`다. 자세한 형식은 `eval/run.py` 독스트링 참조.
+- 판정 정확도 = 대응한 요건 중 정답 판정과 예측 판정이 같은 비율 (미검증은 오답)
+- 지어내기율 = 정답이 '없음'인 요건을 '매칭/부분 매칭'으로 판정한 비율 (목표 0)
+- 인용 정확도 = 정답·예측이 모두 '매칭/부분 매칭'일 때 예측 인용이 정답 인용과 겹치는 비율
+- 혼동행렬 = 정답 판정 × 예측 판정(미검증 포함) 건수. 분모가 0인 지표는 `null`이다.
+- 정답 파일 형식은 `eval/cases/example.json`(요건마다 `verdict`·`citations`), 예측 파일은
+  `eval/predict.py`가 만든다. 자세한 형식은 `eval/run.py` 독스트링 참조.
 
 요건 대응 방식: Parser는 요건 id를 `req-01`부터 순서대로 붙이므로 id로는 정답과 비교할 수
 없다. 그래서 요건 문장의 문자 bigram 유사도(Dice 계수)가 높은 쌍부터 1:1로 대응시키고,
@@ -216,7 +225,10 @@ python -m eval.run --pred eval/preds.json --gold eval/cases/gold.json [--thresho
 
 ## 측정 지표 (실측 후 기재 — 비어 있는 것이 정상이다)
 
+측정 이력은 [docs/개선-기록.md](docs/개선-기록.md)의 "실측 기록"에 누적한다.
+
 - 요건 추출 정확도 (평가셋 20건 기준):
+- 판정 정확도 / 지어내기율 / 인용 정확도:
 - 근거 인용률:
 - 지어내기 차단 건수 (Verifier가 잡아낸 건수, 리포트의 `blocked_claims`):
 - 분석 1건당 LLM 호출 횟수 / 응답 시간 / 비용:
