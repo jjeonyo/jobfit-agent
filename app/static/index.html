@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>잡핏 에이전트</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --surface: #ffffff; --text: #1d1d1b; --muted: #6b6b66;
+    --border: #e2e1dc; --accent: #2f5bd3;
+    --match: #1f7a4d; --match-bg: #e3f3ea;
+    --partial: #8a5a00; --partial-bg: #fbf0d9;
+    --none: #5f5f5a; --none-bg: #ecebe7;
+    --warn: #a3332b; --warn-bg: #fbe6e4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161615; --surface: #1f1f1e; --text: #ecebe7; --muted: #9c9b95;
+      --border: #33332f; --accent: #7d9cf0;
+      --match: #7fd3a5; --match-bg: #1d3328;
+      --partial: #f0c36a; --partial-bg: #3a2f17;
+      --none: #b5b4ae; --none-bg: #2b2b28;
+      --warn: #f0938a; --warn-bg: #3d211f;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI", sans-serif;
+  }
+  main { max-width: 860px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .lead { color: var(--muted); margin: 0 0 24px; }
+  textarea {
+    width: 100%; min-height: 220px; padding: 12px; resize: vertical;
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; font: inherit;
+  }
+  textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .controls { display: flex; align-items: center; gap: 12px; margin: 10px 0 0; flex-wrap: wrap; }
+  button.primary {
+    background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+    padding: 9px 20px; font: inherit; font-weight: 600; cursor: pointer;
+  }
+  button.primary:disabled { opacity: .5; cursor: progress; }
+  .hint { color: var(--muted); font-size: 13px; }
+  .error {
+    margin-top: 16px; padding: 12px 14px; border-radius: 8px;
+    background: var(--warn-bg); color: var(--warn);
+  }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin: 28px 0 16px; }
+  .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+  .stat b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
+  .stat span { color: var(--muted); font-size: 12px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 10px; }
+  .card-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .tag { font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 0 8px; }
+  .req { font-weight: 600; flex: 1 1 260px; }
+  .badge { font-size: 13px; font-weight: 600; border-radius: 6px; padding: 1px 8px; white-space: nowrap; }
+  .v-매칭 { color: var(--match); background: var(--match-bg); }
+  .v-부분 { color: var(--partial); background: var(--partial-bg); }
+  .v-없음 { color: var(--none); background: var(--none-bg); }
+  .v-미검증 { color: var(--warn); background: var(--warn-bg); }
+  .rationale { margin: 8px 0 0; }
+  .label { font-size: 12px; color: var(--muted); font-weight: 600; margin: 10px 0 2px; }
+  .cites { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .cite {
+    font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer;
+    background: transparent; color: var(--accent); border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px;
+  }
+  .cite[aria-expanded="true"] { border-color: var(--accent); }
+  .chunk {
+    margin-top: 8px; padding: 10px 12px; border-left: 3px solid var(--accent);
+    background: var(--bg); font-size: 13px; white-space: pre-wrap; word-break: break-word;
+  }
+  .plan { margin: 0; white-space: pre-wrap; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>잡핏 에이전트</h1>
+  <p class="lead">채용공고 텍스트를 붙여넣으면 이력서 원문 근거로만 핏을 분석합니다. 인용 없는 판정은 표시하지 않습니다.</p>
+
+  <form id="form">
+    <label for="posting" class="hint">채용공고 텍스트</label>
+    <textarea id="posting" maxlength="20000" placeholder="자격요건, 우대사항, 근무조건이 포함된 공고 본문을 붙여넣으세요." required></textarea>
+    <div class="controls">
+      <button class="primary" id="submit" type="submit">분석</button>
+      <span class="hint" id="status"></span>
+      <span class="hint" id="count" style="margin-left:auto">0 / 20,000자</span>
+    </div>
+  </form>
+
+  <div class="error" id="error" role="alert" hidden></div>
+  <section id="result" hidden>
+    <div class="stats" id="stats"></div>
+    <div id="cards"></div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const form = $("form"), posting = $("posting"), submit = $("submit");
+let chunkCache = null;
+
+posting.addEventListener("input", () => {
+  $("count").textContent = `${posting.value.length.toLocaleString()} / 20,000자`;
+});
+
+function el(tag, props = {}, children = []) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(props)) {
+    if (key === "text") node.textContent = value;
+    else node.setAttribute(key, value);
+  }
+  for (const child of children) node.append(child);
+  return node;
+}
+
+async function loadChunks() {
+  if (chunkCache) return chunkCache;
+  const response = await fetch("/chunks");
+  if (!response.ok) throw new Error("근거 청크를 불러오지 못했습니다");
+  chunkCache = Object.fromEntries((await response.json()).map((c) => [c.id, c.text]));
+  return chunkCache;
+}
+
+function verdictClass(verdict) {
+  return verdict === "부분 매칭" ? "v-부분" : `v-${verdict}`;
+}
+
+function citationButtons(citations) {
+  const wrap = el("div");
+  const row = el("div", { class: "cites" });
+  const panel = el("div", { class: "chunk", hidden: "" });
+  let open = null;
+  for (const id of citations) {
+    const button = el("button", { class: "cite", type: "button", "aria-expanded": "false", text: id });
+    button.addEventListener("click", async () => {
+      row.querySelectorAll(".cite").forEach((b) => b.setAttribute("aria-expanded", "false"));
+      if (open === id) { panel.hidden = true; open = null; return; }
+      try {
+        const chunks = await loadChunks();
+        panel.textContent = chunks[id] ?? "이 청크 id는 현재 이력서에 없습니다.";
+      } catch (err) {
+        panel.textContent = err.message;
+      }
+      button.setAttribute("aria-expanded", "true");
+      panel.hidden = false;
+      open = id;
+    });
+    row.append(button);
+  }
+  wrap.append(row, panel);
+  return wrap;
+}
+
+function render(report) {
+  const matches = Object.fromEntries(report.matches.map((m) => [m.requirement_id, m]));
+  const gaps = Object.fromEntries(report.gaps.map((g) => [g.requirement_id, g]));
+  const unverified = new Set(report.unverified);
+  const count = (v) => report.matches.filter((m) => m.verdict === v).length;
+
+  const stats = [
+    [report.requirements.length, "요건"],
+    [count("매칭"), "매칭"],
+    [count("부분 매칭"), "부분 매칭"],
+    [count("없음"), "없음"],
+    [report.unverified.length, "미검증"],
+    [report.blocked_claims, "차단된 주장"],
+    [report.llm_calls, "LLM 호출"],
+  ];
+  $("stats").replaceChildren(...stats.map(([n, label]) =>
+    el("div", { class: "stat" }, [el("b", { text: String(n) }), el("span", { text: label })])));
+
+  const cards = report.requirements.map((req) => {
+    const match = matches[req.id];
+    const isUnverified = unverified.has(req.id) || !match;
+    const badgeText = isUnverified ? "미검증" : match.verdict;
+    const card = el("article", { class: "card" }, [
+      el("div", { class: "card-head" }, [
+        el("span", { class: "tag", text: req.category }),
+        el("span", { class: "req", text: req.text }),
+        el("span", { class: `badge ${isUnverified ? "v-미검증" : verdictClass(match.verdict)}`, text: badgeText }),
+      ]),
+    ]);
+    if (isUnverified) {
+      card.append(el("p", { class: "rationale hint", text: "근거 인용을 확보하지 못해 판정을 표시하지 않습니다." }));
+    } else {
+      if (match.rationale) card.append(el("p", { class: "rationale", text: match.rationale }));
+      if (match.citations.length) {
+        card.append(el("div", { class: "label", text: "이력서 근거" }), citationButtons(match.citations));
+      }
+    }
+    if (gaps[req.id]) {
+      card.append(el("div", { class: "label", text: "준비 계획" }), el("p", { class: "plan", text: gaps[req.id].plan }));
+    }
+    return card;
+  });
+  $("cards").replaceChildren(...cards);
+  $("result").hidden = false;
+}
+
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  $("error").hidden = true;
+  submit.disabled = true;
+  const started = Date.now();
+  const timer = setInterval(() => {
+    $("status").textContent = `분석 중… ${Math.round((Date.now() - started) / 1000)}초`;
+  }, 500);
+  try {
+    const response = await fetch("/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ posting_text: posting.value }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const detail = typeof body.detail === "string" ? body.detail : "요청이 올바르지 않습니다";
+      throw new Error(`${response.status} — ${detail}`);
+    }
+    render(body);
+    $("status").textContent = `완료 (${((Date.now() - started) / 1000).toFixed(1)}초)`;
+  } catch (err) {
+    $("result").hidden = true;
+    $("error").textContent = err.message;
+    $("error").hidden = false;
+    $("status").textContent = "";
+  } finally {
+    clearInterval(timer);
+    submit.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
