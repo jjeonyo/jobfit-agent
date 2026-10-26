@@ -30,14 +30,16 @@ LangGraph 상태 그래프. 흐름은 다음과 같다.
 공고 텍스트
   → parser (요건 추출)
   → matcher (이력서 근거 대조)
-  → gap (준비 계획)
   → verifier (검증 원장)
+  → gap (준비 계획)
   → 리포트
 ```
 
 검증 원장이 재생성을 요청하면 대조 단계로 되돌아간다 (최대 3회).
+재생성 때는 차단된 요건만 재검증 지시와 함께 다시 판정하고, 통과한 판정은 그대로 둔다.
 3회 후에도 근거가 없으면 해당 요건은 `unverified`로 표시하고 매칭에서 제외한다.
 절대 근거 없는 판정을 리포트에 노출하지 않는다.
+Gap Planner는 검증을 통과한 판정만 받는다 (설계 결정 기록 참조).
 
 ### 에이전트 4종
 
@@ -52,24 +54,32 @@ LangGraph 상태 그래프. 흐름은 다음과 같다.
 
 | 파일 | 책임 |
 | --- | --- |
-| `app/main.py` | FastAPI 진입점. `GET /health`, `POST /analyze`. API 키가 없으면 지어낸 리포트 대신 503을 반환한다. |
-| `app/graph.py` | LangGraph 그래프 배선 (파서 → 대조 → 갭 → 검증, 검증 실패 시 대조로 회귀). |
-| `app/agents.py` | 노드 4종의 프롬프트와 실행 로직. 모든 출력은 pydantic 스키마로 검증하고, 파싱 실패 시 1회 재시도한다. |
+| `app/main.py` | FastAPI 진입점. `GET /`(웹 폼), `GET /health`, `GET /chunks`, `POST /analyze`. API 키가 없으면 지어낸 리포트 대신 503을 반환한다. |
+| `app/static/index.html` | 웹 UI. 프론트 프레임워크 없는 정적 HTML 1장. 공고 붙여넣기 → 요건별 판정·인용(클릭 시 청크 원문)·준비 계획 표시. |
+| `app/graph.py` | LangGraph 그래프 배선 (파서 → 대조 → 검증 → 갭, 검증 실패 시 대조로 회귀). |
+| `app/agents.py` | 노드 4종의 프롬프트와 실행 로직. JSON 파싱 실패 시 1회 재시도(코드펜스 허용), 그래도 실패하면 502. 스키마 검증에 실패한 항목은 버리고, 판정이 빠진 요건은 검증 원장이 재생성 대상으로 잡는다. |
 | `app/state.py` | 그래프 상태(`AgentState`) 정의. 모든 노드는 상태의 일부만 갱신한다. |
 | `app/schemas.py` | `Requirement`, `Match`, `GapPlan`, `Report` 스키마. `verdict`는 `Literal["매칭", "부분 매칭", "없음"]`로 고정돼 있어 다른 값이 들어오면 검증 에러가 난다. |
 | `app/chunking.py` | 이력서 원문 청킹. 기본값 1,000자/중첩 100자 (LG ELLE 프로젝트에서 검증한 설정). 청크 id(`chunk-001` ...)가 근거 인용의 단위다. |
-| `app/rag.py` | 하이브리드 검색. 현재는 키워드 검색만 구현돼 있고, 벡터 검색은 `VectorStore` 프로토콜에 맞춰 추가하면 된다. |
+| `app/rag.py` | 하이브리드 검색. 벡터 0.9 + 키워드 0.1 가중합. 벡터 스토어가 없으면 키워드 검색만 쓴다. 청크 본문은 항상 로컬 이력서에서 가져온다. |
+| `app/vectorstore.py` | Supabase pgvector 백엔드 (`VectorStore` 구현). `SUPABASE_URL`·`SUPABASE_KEY`가 있을 때만 켜진다. 이력서 청크를 프로세스당 1회(내용이 바뀌면 다시) 임베딩해 업서트한다. 실패하면 경고 후 키워드 검색으로 진행한다. |
+| `db/supabase.sql` | pgvector 테이블·검색 함수 스키마. Supabase SQL Editor에서 1회 실행한다. |
 | `app/profile.py` | `data/profile.md`를 읽어 근거 청크 목록으로 만든다. 파일이 없으면 템플릿 채우기를 안내하는 에러를 낸다. |
 | `eval/run.py` | 평가 지표 계산 CLI. 예측 JSON과 정답 JSON을 비교해 요건 추출 정확도와 근거 인용률을 낸다. |
-| `tests/` | LLM 없이 실행되는 테스트. 스키마 검증, 청킹, 평가 지표 수학, 검증 원장 동작, API 키 없을 때 503 반환을 확인한다. |
+| `tests/` | LLM·네트워크 없이 실행되는 테스트. 스키마 검증, 청킹, 평가 지표 수학, 검증 원장 동작, API 키 없을 때 503 반환, 가짜 LLM으로 그래프 엔드투엔드(재생성·unverified·차단 집계), 하이브리드 가중치, Supabase 요청 형식을 확인한다. |
+| `docs/판정-기준.md` | 평가셋 정답 라벨 작성 기준 (애매하면 '부분 매칭'). |
+| `render.yaml`, `.github/workflows/ci.yml` | Render 배포 Blueprint, CI (테스트 + Docker 빌드). |
 
 ### 데이터 흐름과 인용 규칙
 
 1. `data/profile.md`의 이력서 원문을 1,000자/중첩 100자로 나눠 청크 id를 부여한다.
 2. 요건마다 근거 청크를 검색해 Matcher 프롬프트에 넣는다 (컨텍스트 절약).
 3. Matcher는 근거 청크만을 근거로 판정하고, 근거가 없으면 `verdict="없음"`, `citations=[]`로 한다.
-4. Verifier는 '매칭/부분 매칭' 판정 중 `citations`가 빈 것을 근거 없는 주장으로 보고 차단한다.
-5. 최종 리포트에는 인용이 붙은 판정과 `unverified` 목록만 노출된다.
+4. Verifier는 '매칭/부분 매칭' 판정 중 `citations`가 비었거나, 현재 이력서에 없는 청크 id를
+   하나라도 인용한 것을 근거 없는 주장으로 보고 차단한다 (`blocked_claims`로 누적 집계).
+   판정이 누락된 요건도 재생성 대상이다.
+5. Gap Planner는 검증을 통과한 '부분 매칭/없음' 판정만 받는다.
+6. 최종 리포트에는 인용이 붙은 판정과 `unverified` 목록만 노출된다.
 
 ## 핵심 불변 규칙 (이어받는 AI는 반드시 지킨다)
 
@@ -84,20 +94,22 @@ LangGraph 상태 그래프. 흐름은 다음과 같다.
 
 ### 구현 완료
 
-- FastAPI + LangGraph 골격 전체 (파서 → 대조 → 갭 → 검증 → 리포트)
-- 검증 원장: 인용 없는 주장 차단, 최대 3회 재생성, 이후 unverified 처리
-- 청킹 (1,000자/중첩 100자), 키워드 검색, 스키마 검증
-- 평가 지표 스크립트 (`eval/run.py`)와 평가 케이스 템플릿 (`eval/cases/example.json`)
-- Docker Compose, GitHub Actions CI (테스트 + Docker 빌드)
-- 테스트 12개 전부 통과, 그래프 컴파일 검증 완료 (2026-10-26)
+- FastAPI + LangGraph 파이프라인 (파서 → 대조 → 검증 → 갭 → 리포트)
+- 검증 원장: 인용 없음·존재하지 않는 청크 인용·판정 누락 차단, 차단 요건만 최대 3회 재생성, 이후 unverified 처리, 차단 건수(`blocked_claims`) 리포트 노출
+- 청킹 (1,000자/중첩 100자), 하이브리드 검색 (벡터 0.9 + 키워드 0.1), 스키마 검증
+- 벡터 검색 백엔드 (Supabase pgvector) — 요청 형식은 테스트로 확인, 실제 Supabase 인스턴스 연결은 미확인
+- 웹 UI (`GET /`) — 가짜 LLM 응답으로 데스크톱·모바일 렌더링 확인
+- 평가 지표 스크립트 (`eval/run.py`), 평가 케이스 템플릿 (`eval/cases/example.json`), 판정 기준 문서 (`docs/판정-기준.md`)
+- Docker Compose, Render Blueprint (`render.yaml`), GitHub Actions CI (테스트 + Docker 빌드)
+- `data/profile.md` 이력서 원문 (민감 정보 제외)
+- 테스트 30개 통과 (LLM·네트워크 없이)
 
-### 아직 구현되지 않은 것 (다음 작업)
+### 아직 하지 않은 것 (다음 작업)
 
-- 벡터 검색 (Supabase pgvector): `app/rag.py`의 `VectorStore` 프로토콜에 맞춰 구현한다. 키워드 검색만으로도 파이프라인은 동작한다.
-- 웹 UI: FastAPI 기반 간단한 폼 (프론트 프레임워크 도입 없음).
-- 배포: Railway / Render 무료 티어 중 하나.
-- 실제 평가셋 20건: 실제 공고 + 요건·판정 정답 라벨 직접 작성. 애매한 요건은 '부분 매칭'으로 처리하는 규칙을 문서화한다.
-- `data/profile.md` 실제 내용: 현재 템플릿 상태다. STAR 이력서 원문을 붙여넣어야 동작한다 (민감 정보 제외).
+- 실제 OpenAI 키로 엔드투엔드 실행: 지금까지는 가짜 LLM으로만 실행했다.
+- 배포: `render.yaml`은 준비돼 있다. Render 계정에서 Blueprint를 연결하고 키를 입력해야 한다.
+- 실제 평가셋 20건: 실제 공고 + 요건·판정 정답 라벨 직접 작성 (`docs/판정-기준.md`).
+- 평가 지표 보완: 요건 추출 정확도가 요건 id 일치로 계산돼, 예측 요건과 정답 요건의 내용 대응이 보장되지 않는다. 판정 정확도는 아직 계산하지 않는다.
 
 ## 실행 방법
 
@@ -108,7 +120,8 @@ cp .env.example .env   # OPENAI_API_KEY 입력 (필수)
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload
-# POST http://localhost:8000/analyze  {"posting_text": "..."}
+# 웹 UI: http://localhost:8000/
+# API:   POST http://localhost:8000/analyze  {"posting_text": "..."}
 ```
 
 ### Docker
@@ -122,9 +135,27 @@ docker compose up --build
 | 변수 | 필수 | 설명 |
 | --- | --- | --- |
 | `OPENAI_API_KEY` | 필수 | 없으면 `/analyze`가 503을 반환한다 (지어낸 리포트 금지). |
-| `SUPABASE_URL`, `SUPABASE_KEY` | 선택 | 벡터 검색 구현 후 사용. 지금은 비워둬도 된다. |
+| `SUPABASE_URL`, `SUPABASE_KEY` | 선택 | 둘 다 있으면 벡터 검색을 켠다. `db/supabase.sql`을 먼저 실행하고, 키는 service_role 키(서버 전용)를 쓴다. 비워두면 키워드 검색만 쓴다. |
+
+### 배포 (Render)
+
+1. Render 대시보드에서 New → Blueprint로 이 저장소를 연결한다 (`render.yaml`).
+2. `OPENAI_API_KEY`(필요하면 `SUPABASE_URL`, `SUPABASE_KEY`)를 입력한다.
+3. 배포 후 `/health`가 `{"status": "ok"}`를 반환하는지, `/`에서 공고를 넣고 리포트가 나오는지 확인한다.
+
+컨테이너는 `PORT` 환경 변수(없으면 8000)로 뜬다. 로그인이 없으므로 공개 URL에서는
+누구나 분석을 실행할 수 있다. 요청 1건의 공고 길이는 20,000자로 제한한다.
 
 ## API
+
+### `GET /`
+
+웹 폼. 공고를 붙여넣으면 `/analyze`를 호출해 요건별 판정·인용·준비 계획을 보여준다.
+인용 id를 누르면 해당 청크 원문을 펼친다.
+
+### `GET /chunks`
+
+이력서 근거 청크 목록 `[{"id": "chunk-001", "text": "..."}]`. 리포트의 인용 id를 원문과 대조할 때 쓴다.
 
 ### `GET /health`
 
@@ -148,16 +179,19 @@ docker compose up --build
   "matches": [{"requirement_id": "req-01", "verdict": "매칭", "citations": ["chunk-003"], "rationale": "..."}],
   "gaps": [{"requirement_id": "req-02", "plan": "..."}],
   "unverified": ["req-03"],
+  "blocked_claims": 1,
   "llm_calls": 4
 }
 ```
 
 - `verdict`는 `매칭` / `부분 매칭` / `없음` 중 하나다.
 - `unverified`는 근거가 없어 표시하지 못한 요건 id 목록이다.
-- `llm_calls`는 분석 1건당 LLM 호출 횟수 (측정용).
+- `blocked_claims`는 검증 원장이 차단한 근거 없는 주장 건수 (재생성 포함 누적, 측정용).
+- `llm_calls`는 분석 1건당 LLM 호출 횟수 (JSON 파싱 재시도 포함, 측정용).
 
-에러: 본문 비어 있음 → 400, `data/profile.md` 없음 → 500,
-`OPENAI_API_KEY` 없음 → 503. 어떤 경우에도 지어낸 리포트를 반환하지 않는다.
+에러: 본문 비어 있음 → 400, 공고 20,000자 초과 → 422, `data/profile.md` 없음 → 500,
+LLM 출력 파싱 실패·LLM 호출 실패 → 502, `OPENAI_API_KEY` 없음 → 503.
+어떤 경우에도 지어낸 리포트를 반환하지 않는다.
 
 ## 평가 방법
 
@@ -173,7 +207,7 @@ python -m eval.run --pred eval/preds.json --gold eval/cases/gold.json
 
 - 요건 추출 정확도 (평가셋 20건 기준):
 - 근거 인용률:
-- 지어내기 차단 건수 (Verifier가 잡아낸 건수):
+- 지어내기 차단 건수 (Verifier가 잡아낸 건수, 리포트의 `blocked_claims`):
 - 분석 1건당 LLM 호출 횟수 / 응답 시간 / 비용:
 
 ## 테스트
@@ -182,7 +216,7 @@ python -m eval.run --pred eval/preds.json --gold eval/cases/gold.json
 python -m pytest tests/ -q
 ```
 
-테스트는 LLM 없이 실행된다. `tests/test_api.py`는 API 키가 없을 때
+테스트는 LLM·네트워크 없이 실행된다 (그래프 테스트는 가짜 LLM을 쓴다). `tests/test_api.py`는 API 키가 없을 때
 지어낸 리포트 대신 503을 반환하는지 확인한다. 이 테스트를 삭제하거나
 우회해서는 안 된다.
 
@@ -210,11 +244,17 @@ python -m pytest tests/ -q
 - **붙여넣기 입력**: 공고 크롤링은 약관·차단 리스크가 있어 범위 밖이다.
 - **검증 원장을 별도 노드로 분리**: Matcher가 스스로 검증하면 근거 없는
   주장을 자기합리화하기 쉽다. 검증 책임을 분리한 것이 이 프로젝트의 핵심이다.
+- **검증 → 갭 순서**: 처음 설계는 갭 → 검증이었다. 이 순서에서는 차단될 판정의
+  rationale(예: "Kafka 실무 3년")이 Gap Planner 입력으로 들어가 학습 계획 문장으로
+  리포트에 노출될 수 있어, 검증 원장을 우회하는 경로가 된다. 그래서 검증을 먼저 하고
+  통과한 판정만 Gap Planner에 넘긴다. 재생성 때 갭을 다시 돌리는 호출도 없어진다.
+- **존재하지 않는 청크 인용도 차단**: 인용이 비어 있지 않아도 현재 이력서에 없는
+  청크 id를 인용하면 지어낸 인용이다. 하나라도 섞이면 판정 전체를 차단한다.
 - **1인 사용·로그인 없음**: 2주 안에 배포까지 가기 위한 범위 축소 결정이다.
 
 ## 이어받을 때 가장 먼저 할 일
 
-1. `data/profile.md`에 STAR 이력서 원문을 붙여넣는다 (민감 정보 제외).
-2. `.env`에 `OPENAI_API_KEY`를 넣고 실제 공고 1건으로 `/analyze`를 실행한다.
-3. 출력 리포트의 인용 id가 실제 청크와 일치하는지 육안으로 확인한다.
+1. `data/profile.md`가 최신 이력서 원문인지 확인한다 (민감 정보 제외).
+2. `.env`에 `OPENAI_API_KEY`를 넣고 `http://localhost:8000/`에서 실제 공고 1건을 분석한다.
+3. 리포트의 인용 id를 눌러 청크 원문이 판정 근거와 맞는지 육안으로 확인한다.
 4. 그다음 [docs/2주-실행-계획.md](docs/2주-실행-계획.md)의 Day 1–3부터 진행한다.
