@@ -65,7 +65,7 @@ Gap Planner는 검증을 통과한 판정만 받는다 (설계 결정 기록 참
 | `app/vectorstore.py` | Supabase pgvector 백엔드 (`VectorStore` 구현). `SUPABASE_URL`·`SUPABASE_KEY`가 있을 때만 켜진다. 이력서 청크를 프로세스당 1회(내용이 바뀌면 다시) 임베딩해 업서트한다. 실패하면 경고 후 키워드 검색으로 진행한다. |
 | `db/supabase.sql` | pgvector 테이블·검색 함수 스키마. Supabase SQL Editor에서 1회 실행한다. |
 | `app/profile.py` | `data/profile.md`를 읽어 근거 청크 목록으로 만든다. 파일이 없으면 템플릿 채우기를 안내하는 에러를 낸다. |
-| `eval/run.py` | 평가 지표 계산 CLI. 예측 JSON과 정답 JSON을 비교해 요건 추출 정확도와 근거 인용률을 낸다. |
+| `eval/run.py` | 평가 지표 계산 CLI. 예측 JSON과 정답 JSON을 비교해 요건 추출 정확도와 근거 인용률을 낸다. 예측 요건과 정답 요건은 id가 아니라 요건 문장 유사도로 1:1 대응시킨다. |
 | `tests/` | LLM·네트워크 없이 실행되는 테스트. 스키마 검증, 청킹, 평가 지표 수학, 검증 원장 동작, API 키 없을 때 503 반환, 가짜 LLM으로 그래프 엔드투엔드(재생성·unverified·차단 집계), 하이브리드 가중치, Supabase 요청 형식을 확인한다. |
 | `docs/판정-기준.md` | 평가셋 정답 라벨 작성 기준 (애매하면 '부분 매칭'). |
 | `render.yaml`, `.github/workflows/ci.yml` | Render 배포 Blueprint, CI (테스트 + Docker 빌드). |
@@ -102,14 +102,14 @@ Gap Planner는 검증을 통과한 판정만 받는다 (설계 결정 기록 참
 - 평가 지표 스크립트 (`eval/run.py`), 평가 케이스 템플릿 (`eval/cases/example.json`), 판정 기준 문서 (`docs/판정-기준.md`)
 - Docker Compose, Render Blueprint (`render.yaml`), GitHub Actions CI (테스트 + Docker 빌드)
 - `data/profile.md` 이력서 원문 (민감 정보 제외)
-- 테스트 30개 통과 (LLM·네트워크 없이)
+- 테스트 34개 통과 (LLM·네트워크 없이)
 
 ### 아직 하지 않은 것 (다음 작업)
 
 - 실제 OpenAI 키로 엔드투엔드 실행: 지금까지는 가짜 LLM으로만 실행했다.
 - 배포: `render.yaml`은 준비돼 있다. Render 계정에서 Blueprint를 연결하고 키를 입력해야 한다.
 - 실제 평가셋 20건: 실제 공고 + 요건·판정 정답 라벨 직접 작성 (`docs/판정-기준.md`).
-- 평가 지표 보완: 요건 추출 정확도가 요건 id 일치로 계산돼, 예측 요건과 정답 요건의 내용 대응이 보장되지 않는다. 판정 정확도는 아직 계산하지 않는다.
+- 판정 정확도: 요건 대응은 내용 기준으로 바뀌었지만, 대응한 요건의 판정이 정답과 같은지는 아직 계산하지 않는다.
 
 ## 실행 방법
 
@@ -196,12 +196,23 @@ LLM 출력 파싱 실패·LLM 호출 실패 → 502, `OPENAI_API_KEY` 없음 →
 ## 평가 방법
 
 ```bash
-python -m eval.run --pred eval/preds.json --gold eval/cases/gold.json
+python -m eval.run --pred eval/preds.json --gold eval/cases/gold.json [--threshold 0.5]
 ```
 
-- 요건 추출 정확도 = 정답 요건 중 예측에 포함된 비율
+- 요건 추출 정확도 = 정답 요건 중 내용이 대응하는 예측 요건이 있는 비율
 - 근거 인용률 = '매칭/부분 매칭' 판정 중 인용이 붙은 비율 (차단 기준 1.0)
-- 두 파일 형식은 `eval/cases/example.json`과 `eval/run.py` 독스트링 참조.
+- 정답 파일 형식은 `eval/cases/example.json`, 예측 파일은 케이스마다 `id` + `/analyze` 응답의
+  `requirements`·`matches`다. 자세한 형식은 `eval/run.py` 독스트링 참조.
+
+요건 대응 방식: Parser는 요건 id를 `req-01`부터 순서대로 붙이므로 id로는 정답과 비교할 수
+없다. 그래서 요건 문장의 문자 bigram 유사도(Dice 계수)가 높은 쌍부터 1:1로 대응시키고,
+`--threshold`(기본 0.5) 미만인 쌍은 대응시키지 않는다. LLM 없이 결정적으로 계산된다.
+
+- 기본값 0.5 근거: 표기만 다른 같은 요건 예시 6쌍이 0.55~0.76, 다른 요건 예시 5쌍이 0.00~0.38이었다.
+- 한계: 동의어("커뮤니케이션"/"의사소통", 0.33)는 놓치고, 핵심어 하나만 다른 문장
+  ("AWS 클라우드 운영 경험"/"GCP 클라우드 운영 경험", 0.70)은 대응시킨다.
+- 그래서 출력의 `per_case`에 케이스별 대응 쌍(`alignment`)과 대응하지 못한 정답 요건
+  (`unmatched_gold_ids`)을 함께 낸다. 실측값을 기록하기 전에 이 목록을 육안으로 확인한다.
 
 ## 측정 지표 (실측 후 기재 — 비어 있는 것이 정상이다)
 
