@@ -57,10 +57,10 @@ Gap Planner는 검증을 통과한 판정만 받는다 (설계 결정 기록 참
 | `app/main.py` | FastAPI 진입점. `GET /`(웹 폼), `GET /health`, `GET /chunks`, `POST /analyze`. API 키가 없으면 지어낸 리포트 대신 503을 반환한다. |
 | `app/static/index.html` | 웹 UI. 프론트 프레임워크 없는 정적 HTML 1장. 공고 붙여넣기 → 요건별 판정·인용(클릭 시 청크 원문)·준비 계획 표시. |
 | `app/graph.py` | LangGraph 그래프 배선 (파서 → 대조 → 검증 → 갭, 검증 실패 시 대조로 회귀). |
-| `app/agents.py` | 노드 4종의 프롬프트와 실행 로직. JSON 파싱 실패 시 1회 재시도(코드펜스 허용), 그래도 실패하면 502. 스키마 검증에 실패한 항목은 버리고, 판정이 빠진 요건은 검증 원장이 재생성 대상으로 잡는다. |
+| `app/agents.py` | 노드 4종의 프롬프트와 실행 로직. JSON 파싱 실패 시 1회 재시도(코드펜스 허용), 그래도 실패하면 502. 스키마 검증에 실패한 항목은 버리고, 판정이 빠진 요건은 검증 원장이 재생성 대상으로 잡는다. 검증 원장의 근거 문장 검사(`block_reason`)도 여기 있다. |
 | `app/state.py` | 그래프 상태(`AgentState`) 정의. 모든 노드는 상태의 일부만 갱신한다. |
 | `app/schemas.py` | `Requirement`, `Match`, `GapPlan`, `Report` 스키마. `verdict`는 `Literal["매칭", "부분 매칭", "없음"]`로 고정돼 있어 다른 값이 들어오면 검증 에러가 난다. |
-| `app/chunking.py` | 이력서 원문 청킹. 기본값 1,000자/중첩 100자 (LG ELLE 프로젝트에서 검증한 설정). 청크 id(`chunk-001` ...)가 근거 인용의 단위다. |
+| `app/chunking.py` | 이력서 원문 청킹. 기본값 1,000자/중첩 100자 (LG ELLE 프로젝트에서 검증한 설정). 청크 id(`chunk-001` ...)가 근거 인용의 단위다. 청크마다 전체 본문 내 위치(`start`)를 기록한다. |
 | `app/rag.py` | 하이브리드 검색. 벡터 0.9 + 키워드 0.1 가중합. 벡터 스토어가 없으면 키워드 검색만 쓴다. 청크 본문은 항상 로컬 이력서에서 가져온다. |
 | `app/vectorstore.py` | Supabase pgvector 백엔드 (`VectorStore` 구현). `SUPABASE_URL`·`SUPABASE_KEY`가 있을 때만 켜진다. 이력서 청크를 프로세스당 1회(내용이 바뀌면 다시) 임베딩해 업서트한다. 실패하면 경고 후 키워드 검색으로 진행한다. |
 | `db/supabase.sql` | pgvector 테이블·검색 함수 스키마. Supabase SQL Editor에서 1회 실행한다. |
@@ -77,8 +77,13 @@ Gap Planner는 검증을 통과한 판정만 받는다 (설계 결정 기록 참
 1. `data/profile.md`의 이력서 원문을 1,000자/중첩 100자로 나눠 청크 id를 부여한다.
 2. 요건마다 근거 청크를 검색해 Matcher 프롬프트에 넣는다 (컨텍스트 절약).
 3. Matcher는 근거 청크만을 근거로 판정하고, 근거가 없으면 `verdict="없음"`, `citations=[]`로 한다.
-4. Verifier는 '매칭/부분 매칭' 판정 중 `citations`가 비었거나, 현재 이력서에 없는 청크 id를
-   하나라도 인용한 것을 근거 없는 주장으로 보고 차단한다 (`blocked_claims`로 누적 집계).
+   '매칭/부분 매칭'이면 인용한 청크마다 근거 문장(`quotes`)을 청크에서 글자 그대로 복사해 낸다.
+4. Verifier는 '매칭/부분 매칭' 판정 중 다음에 해당하면 근거 없는 주장으로 보고 차단한다
+   (`blocked_claims`로 누적 집계). 차단 사유는 재생성 프롬프트에 들어간다.
+   - 인용이 없거나, 현재 이력서에 없는 청크 id를 인용했다.
+   - 인용한 청크에 근거 문장이 없거나, 근거 문장이 10자 미만이거나, 청크 원문에 없다.
+   - 근거 문장이 '학습 중' 표기가 있는 목록 항목에 속한다 (청크 경계를 넘는 항목 포함).
+
    판정이 누락된 요건도 재생성 대상이다.
 5. Gap Planner는 검증을 통과한 '부분 매칭/없음' 판정만 받는다.
 6. 최종 리포트에는 인용이 붙은 판정과 `unverified` 목록만 노출된다.
@@ -97,7 +102,7 @@ Gap Planner는 검증을 통과한 판정만 받는다 (설계 결정 기록 참
 ### 구현 완료
 
 - FastAPI + LangGraph 파이프라인 (파서 → 대조 → 검증 → 갭 → 리포트)
-- 검증 원장: 인용 없음·존재하지 않는 청크 인용·판정 누락 차단, 차단 요건만 최대 3회 재생성, 이후 unverified 처리, 차단 건수(`blocked_claims`) 리포트 노출
+- 검증 원장: 인용 없음·존재하지 않는 청크 인용·판정 누락 차단, 근거 문장 원문 대조('학습 중' 항목 차단 포함), 차단 사유와 함께 차단 요건만 최대 3회 재생성, 이후 unverified 처리, 차단 건수(`blocked_claims`) 리포트 노출
 - 청킹 (1,000자/중첩 100자), 하이브리드 검색 (벡터 0.9 + 키워드 0.1), 스키마 검증
 - 벡터 검색 백엔드 (Supabase pgvector) — 요청 형식은 테스트로 확인, 실제 Supabase 인스턴스 연결은 미확인
 - 웹 UI (`GET /`) — 가짜 LLM 응답으로 데스크톱·모바일 렌더링 확인
@@ -105,7 +110,7 @@ Gap Planner는 검증을 통과한 판정만 받는다 (설계 결정 기록 참
 - Matcher 프롬프트에 판정 기준 반영 (라벨 기준과 같은 문장, 테스트로 일치 확인)
 - Docker Compose, Render Blueprint (`render.yaml`), GitHub Actions CI (테스트 + Docker 빌드)
 - `data/profile.md` 이력서 원문 (민감 정보 제외)
-- 테스트 40개 통과 (LLM·네트워크 없이)
+- 테스트 56개 통과 (LLM·네트워크 없이)
 
 ### 아직 하지 않은 것 (다음 작업)
 
@@ -113,7 +118,7 @@ Gap Planner는 검증을 통과한 판정만 받는다 (설계 결정 기록 참
 - 배포: `render.yaml`은 준비돼 있다. Render 계정에서 Blueprint를 연결하고 키를 입력해야 한다.
 - 실제 평가셋 20건: 실제 공고 + 요건·판정 정답 라벨 직접 작성 (`docs/판정-기준.md`).
 - 기준선 측정: 평가셋으로 `eval.predict` → `eval.run`을 실행해 첫 실측값을 기록한다.
-- 미해결 문제와 대응 후보는 [docs/개선-기록.md](docs/개선-기록.md) 참조 (검증 원장이 인용 내용의 뒷받침 여부를 보지 않는 문제 등).
+- 미해결 문제와 대응 후보는 [docs/개선-기록.md](docs/개선-기록.md) 참조 (근거 문장이 원문에 있지만 요건과 무관한 경우는 아직 못 잡는다 — P9, 근거 문장 검사의 과잉 차단 감시 — P14 등).
 
 ## 실행 방법
 
@@ -180,7 +185,9 @@ docker compose up --build
 ```json
 {
   "requirements": [{"id": "req-01", "category": "필수", "text": "..."}],
-  "matches": [{"requirement_id": "req-01", "verdict": "매칭", "citations": ["chunk-003"], "rationale": "..."}],
+  "matches": [{"requirement_id": "req-01", "verdict": "매칭", "citations": ["chunk-003"],
+               "quotes": [{"chunk_id": "chunk-003", "text": "청크 원문에서 그대로 복사한 근거 문장"}],
+               "rationale": "..."}],
   "gaps": [{"requirement_id": "req-02", "plan": "..."}],
   "unverified": ["req-03"],
   "blocked_claims": 1,
