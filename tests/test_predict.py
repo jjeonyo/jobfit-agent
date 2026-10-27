@@ -21,7 +21,17 @@ class FakeLLM:
 def test_predict_case_records_report_and_elapsed(monkeypatch):
     outputs = [
         json.dumps([{"id": "req-01", "category": "필수", "text": "FastAPI 개발 경험"}]),
-        json.dumps([{"requirement_id": "req-01", "verdict": "매칭", "citations": ["chunk-001"]}]),
+        json.dumps(
+            [
+                {
+                    "requirement_id": "req-01",
+                    "verdict": "매칭",
+                    "citations": ["chunk-001"],
+                    "quotes": [{"chunk_id": "chunk-001", "text": "Python FastAPI 백엔드 개발"}],
+                }
+            ],
+            ensure_ascii=False,
+        ),
     ]
     llm = FakeLLM(outputs)
     monkeypatch.setattr(agents, "_get_llm", lambda: llm)

@@ -15,6 +15,9 @@ CHUNKS = [
     {"id": "chunk-002", "text": "Docker Compose 실행 환경 구성"},
 ]
 
+# chunk-001 원문에 글자 그대로 있는 근거 문장
+QUOTE_001 = [{"chunk_id": "chunk-001", "text": "Python FastAPI 백엔드 개발"}]
+
 REQUIREMENTS = [
     {"id": "req-01", "category": "필수", "text": "Python FastAPI 개발 경험"},
     {"id": "req-02", "category": "필수", "text": "Kafka 운영 경험"},
@@ -60,7 +63,7 @@ def run(llm, monkeypatch):
 
 def test_fabricated_claim_is_retried_then_marked_unverified(monkeypatch):
     first = [
-        {"requirement_id": "req-01", "verdict": "매칭", "citations": ["chunk-001"], "rationale": "FastAPI 개발"},
+        {"requirement_id": "req-01", "verdict": "매칭", "citations": ["chunk-001"], "quotes": QUOTE_001, "rationale": "FastAPI 개발"},
         {"requirement_id": "req-02", "verdict": "부분 매칭", "citations": [], "rationale": "Kafka 일부 경험"},
         {"requirement_id": "req-03", "verdict": "없음", "citations": [], "rationale": "근거 없음"},
     ]
@@ -84,7 +87,7 @@ def test_fabricated_claim_is_retried_then_marked_unverified(monkeypatch):
 
 def test_gap_planner_never_sees_blocked_rationale(monkeypatch):
     first = [
-        {"requirement_id": "req-01", "verdict": "매칭", "citations": ["chunk-001"]},
+        {"requirement_id": "req-01", "verdict": "매칭", "citations": ["chunk-001"], "quotes": QUOTE_001},
         {"requirement_id": "req-02", "verdict": "부분 매칭", "citations": [], "rationale": "Kafka 실무 3년"},
         {"requirement_id": "req-03", "verdict": "없음", "citations": []},
     ]
@@ -110,7 +113,7 @@ def test_citation_to_unknown_chunk_is_blocked(monkeypatch):
         {"requirement_id": "req-02", "verdict": "없음", "citations": []},
         {"requirement_id": "req-03", "verdict": "없음", "citations": []},
     ]
-    fixed = [{"requirement_id": "req-01", "verdict": "매칭", "citations": ["chunk-001"]}]
+    fixed = [{"requirement_id": "req-01", "verdict": "매칭", "citations": ["chunk-001"], "quotes": QUOTE_001}]
     report = run(FakeLLM([fabricated, fixed]), monkeypatch)
 
     assert report.unverified == []
@@ -122,10 +125,10 @@ def test_missing_and_invalid_items_are_regenerated(monkeypatch):
     first = [
         {"requirement_id": "req-01", "verdict": "아마도", "citations": []},  # 스키마 위반
         {"requirement_id": "req-02", "verdict": "없음", "citations": []},
-        {"requirement_id": "req-99", "verdict": "매칭", "citations": ["chunk-001"]},  # 없는 요건
+        {"requirement_id": "req-99", "verdict": "매칭", "citations": ["chunk-001"], "quotes": QUOTE_001},  # 없는 요건
     ]
     second = [
-        {"requirement_id": "req-01", "verdict": "매칭", "citations": ["chunk-001"]},
+        {"requirement_id": "req-01", "verdict": "매칭", "citations": ["chunk-001"], "quotes": QUOTE_001},
         {"requirement_id": "req-03", "verdict": "없음", "citations": []},
     ]
     report = run(FakeLLM([first, second]), monkeypatch)
@@ -154,7 +157,7 @@ def test_unparseable_output_raises_after_one_retry():
 
 def test_analyze_endpoint_returns_verified_report(monkeypatch):
     matches = [
-        {"requirement_id": "req-01", "verdict": "매칭", "citations": ["chunk-001"]},
+        {"requirement_id": "req-01", "verdict": "매칭", "citations": ["chunk-001"], "quotes": QUOTE_001},
         {"requirement_id": "req-02", "verdict": "없음", "citations": []},
         {"requirement_id": "req-03", "verdict": "없음", "citations": []},
     ]

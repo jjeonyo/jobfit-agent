@@ -15,6 +15,7 @@ class AgentState(TypedDict, total=False):
     gaps: list[GapPlan]
     unverified: list[str]
     fix_requests: list[str]  # verifier가 재생성을 요청한 요건 id
+    fix_reasons: dict[str, str]  # 요건 id → 차단 사유 (재생성 프롬프트에 넣는다)
     attempts: int  # verifier 재생성 시도 횟수 (최대 3)
     blocked_claims: int  # verifier가 차단한 근거 없는 주장 누적 건수
     route: str  # verifier 판정: "retry"면 matcher로 회귀, "done"이면 gap으로 진행

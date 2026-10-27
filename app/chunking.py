@@ -8,7 +8,9 @@ import re
 def chunk_text(text: str, size: int = 1000, overlap: int = 100) -> list[dict]:
     """텍스트를 size자 단위로 overlap자 겹치게 나눈다.
 
-    반환: [{"id": "chunk-001", "text": ...}] — id는 근거 인용의 단위다.
+    반환: [{"id": "chunk-001", "text": ..., "start": 0}] — id는 근거 인용의 단위다.
+    start는 공백을 접은 전체 본문에서 청크가 시작하는 위치다. 검증 원장이 청크 경계를
+    넘는 목록 항목을 확인할 때 전체 본문을 복원하는 데 쓴다.
     """
     if size <= 0:
         raise ValueError("size는 0보다 커야 한다")
@@ -25,7 +27,7 @@ def chunk_text(text: str, size: int = 1000, overlap: int = 100) -> list[dict]:
     index = 1
     while start < len(text):
         piece = text[start : start + size]
-        chunks.append({"id": f"chunk-{index:03d}", "text": piece})
+        chunks.append({"id": f"chunk-{index:03d}", "text": piece, "start": start})
         if start + size >= len(text):
             break
         start += step

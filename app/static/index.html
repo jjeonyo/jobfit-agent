@@ -74,6 +74,12 @@
     background: var(--bg); font-size: 13px; white-space: pre-wrap; word-break: break-word;
   }
   .plan { margin: 0; white-space: pre-wrap; }
+  .quotes { margin: 4px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+  .quote {
+    padding: 6px 10px; border-left: 3px solid var(--match); background: var(--bg);
+    font-size: 14px; word-break: break-word;
+  }
+  .quote-src { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); margin-left: 6px; }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -189,8 +195,15 @@ function render(report) {
       card.append(el("p", { class: "rationale hint", text: "근거 인용을 확보하지 못해 판정을 표시하지 않습니다." }));
     } else {
       if (match.rationale) card.append(el("p", { class: "rationale", text: match.rationale }));
+      if (match.quotes && match.quotes.length) {
+        card.append(
+          el("div", { class: "label", text: "이력서 근거 문장" }),
+          el("ul", { class: "quotes" }, match.quotes.map((q) =>
+            el("li", { class: "quote" }, [q.text, el("span", { class: "quote-src", text: q.chunk_id })]))),
+        );
+      }
       if (match.citations.length) {
-        card.append(el("div", { class: "label", text: "이력서 근거" }), citationButtons(match.citations));
+        card.append(el("div", { class: "label", text: "청크 원문" }), citationButtons(match.citations));
       }
     }
     if (gaps[req.id]) {
