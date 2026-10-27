@@ -24,3 +24,22 @@ def test_analyze_without_api_key_returns_503_not_fabrication():
 def test_analyze_empty_text_returns_400():
     response = client.post("/analyze", json={"posting_text": "   "})
     assert response.status_code == 400
+
+
+def test_index_serves_web_form():
+    response = client.get("/")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert 'id="posting"' in response.text
+
+
+def test_chunks_returns_profile_chunks():
+    response = client.get("/chunks")
+    assert response.status_code == 200
+    chunks = response.json()
+    assert chunks and chunks[0]["id"] == "chunk-001"
+
+
+def test_analyze_rejects_oversized_posting():
+    response = client.post("/analyze", json={"posting_text": "가" * 20_001})
+    assert response.status_code == 422

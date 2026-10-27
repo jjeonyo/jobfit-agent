@@ -42,4 +42,5 @@ class Report(BaseModel):
     matches: list[Match] = Field(default_factory=list)
     gaps: list[GapPlan] = Field(default_factory=list)
     unverified: list[str] = Field(default_factory=list)
+    blocked_claims: int = 0  # 측정용: 검증 원장이 차단한 근거 없는 주장 건수 (재시도 포함 누적)
     llm_calls: int = 0  # 측정용: 분석 1건당 LLM 호출 횟수

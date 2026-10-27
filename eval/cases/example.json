@@ -1,1 +1,27 @@
-{"gold_requirement_ids":["req-01","req-02"],"gold_requirements":[{"category":"필수","id":"req-01","text":"예시 요건 1"},{"category":"우대","id":"req-02","text":"예시 요건 2"}],"id":"example-01","note":"템플릿입니다. 실제 공고 텍스트와 정답 라벨로 교체하세요. 정답 라벨은 직접 작성하고, 애매한 요건은 판정 기준 문서에 기록합니다.","posting_text":"예시 공고 텍스트를 여기에 붙여넣으세요."}
+{
+  "cases": [
+    {
+      "id": "example-01",
+      "note": "템플릿입니다. 실제 공고 텍스트와 정답 라벨로 교체하세요. 정답 라벨은 docs/판정-기준.md에 따라 직접 작성합니다. text는 공고 문구를 그대로 옮기고(예측 요건과 문장 유사도로 대응), verdict는 매칭/부분 매칭/없음, citations는 GET /chunks의 청크 id입니다. verdict를 아직 정하지 못한 요건은 verdict를 빼면 판정 지표에서 제외됩니다.",
+      "posting_text": "예시 공고 텍스트를 여기에 붙여넣으세요.",
+      "gold_requirements": [
+        {
+          "id": "req-01",
+          "category": "필수",
+          "text": "예시 요건 1",
+          "verdict": "매칭",
+          "citations": [
+            "chunk-001"
+          ]
+        },
+        {
+          "id": "req-02",
+          "category": "우대",
+          "text": "예시 요건 2",
+          "verdict": "없음",
+          "citations": []
+        }
+      ]
+    }
+  ]
+}
