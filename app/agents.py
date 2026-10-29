@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 MAX_VERIFY_ATTEMPTS = 3
 CLAIM_VERDICTS = ("매칭", "부분 매칭")
+# 분석 1건 동안 누적하는 측정값. 상태와 Report에 같은 이름으로 들어간다.
+USAGE_KEYS = ("llm_calls", "input_tokens", "output_tokens")
 
 PARSER_PROMPT = """다음 채용공고 텍스트에서 요건을 추출해 JSON 배열로만 출력하라.
 각 항목: {{"id": "req-01", "category": "필수|우대|근무조건", "text": "요건 내용"}}.
@@ -103,21 +105,40 @@ def _parse_json_array(text: str) -> list:
     return parsed
 
 
-def _call_json(llm, prompt: str) -> tuple[list, int]:
+def _call_json(llm, prompt: str) -> tuple[list, dict]:
     """LLM에 JSON 배열을 요청하고, 파싱 실패 시 1회 재시도한다.
 
-    반환: (항목 목록, 실제 LLM 호출 횟수).
+    반환: (항목 목록, 사용량). 사용량은 USAGE_KEYS별 값으로, 재시도 호출까지 합친
+    실제 LLM 호출 횟수와 응답의 usage_metadata에 적힌 입력·출력 토큰 수다.
     """
-    response = llm.invoke(prompt)
+    usage = dict.fromkeys(USAGE_KEYS, 0)
+
+    def ask(text: str) -> str:
+        response = llm.invoke(text)
+        usage["llm_calls"] += 1
+        tokens = getattr(response, "usage_metadata", None)
+        if tokens:
+            usage["input_tokens"] += tokens.get("input_tokens", 0)
+            usage["output_tokens"] += tokens.get("output_tokens", 0)
+        else:
+            logger.warning("LLM 응답에 토큰 사용량(usage_metadata)이 없어 0으로 집계한다")
+        return response.content
+
+    content = ask(prompt)
     try:
-        return _parse_json_array(response.content), 1
+        return _parse_json_array(content), usage
     except ValueError:
         pass
-    response = llm.invoke(prompt + "\nJSON 배열만 출력하라.")
+    content = ask(prompt + "\nJSON 배열만 출력하라.")
     try:
-        return _parse_json_array(response.content), 2
+        return _parse_json_array(content), usage
     except ValueError as exc:
         raise LLMOutputError("LLM 출력을 2회 연속 JSON 배열로 파싱하지 못했습니다") from exc
+
+
+def _add_usage(state: AgentState, usage: dict) -> dict:
+    """상태의 누적 사용량에 이번 호출의 사용량을 더한 갱신분."""
+    return {key: state.get(key, 0) + usage[key] for key in USAGE_KEYS}
 
 
 def _validate(model: type[BaseModel], items: list) -> list:
@@ -133,14 +154,11 @@ def _validate(model: type[BaseModel], items: list) -> list:
 
 def parse_requirements(state: AgentState) -> dict:
     llm = _get_llm()
-    items, calls = _call_json(llm, PARSER_PROMPT.format(posting_text=state["posting_text"]))
+    items, usage = _call_json(llm, PARSER_PROMPT.format(posting_text=state["posting_text"]))
     requirements: dict[str, Requirement] = {}
     for req in _validate(Requirement, items):
         requirements.setdefault(req.id, req)
-    return {
-        "requirements": list(requirements.values()),
-        "llm_calls": state.get("llm_calls", 0) + calls,
-    }
+    return {"requirements": list(requirements.values()), **_add_usage(state, usage)}
 
 
 def match_profile(state: AgentState) -> dict:
@@ -170,7 +188,7 @@ def match_profile(state: AgentState) -> dict:
     )
     if fix_ids:
         prompt += MATCHER_RETRY_NOTE
-    items, calls = _call_json(llm, prompt)
+    items, usage = _call_json(llm, prompt)
 
     target_ids = {req.id for req in targets}
     by_id = {
@@ -182,7 +200,7 @@ def match_profile(state: AgentState) -> dict:
         if match.requirement_id in target_ids:
             by_id.setdefault(match.requirement_id, match)
     matches = [by_id[req.id] for req in requirements if req.id in by_id]
-    return {"matches": matches, "llm_calls": state.get("llm_calls", 0) + calls}
+    return {"matches": matches, **_add_usage(state, usage)}
 
 
 def plan_gaps(state: AgentState) -> dict:
@@ -209,10 +227,10 @@ def plan_gaps(state: AgentState) -> dict:
         ],
         ensure_ascii=False,
     )
-    items, calls = _call_json(llm, GAP_PROMPT.format(gaps_json=gaps_json))
+    items, usage = _call_json(llm, GAP_PROMPT.format(gaps_json=gaps_json))
     unmatched_ids = {match.requirement_id for match in unmatched}
     gaps = [gap for gap in _validate(GapPlan, items) if gap.requirement_id in unmatched_ids]
-    return {"gaps": gaps, "llm_calls": state.get("llm_calls", 0) + calls}
+    return {"gaps": gaps, **_add_usage(state, usage)}
 
 
 def verify(state: AgentState) -> dict:
@@ -275,5 +293,5 @@ def build_report(state: AgentState) -> Report:
         gaps=state.get("gaps", []),
         unverified=state.get("unverified", []),
         blocked_claims=state.get("blocked_claims", 0),
-        llm_calls=state.get("llm_calls", 0),
+        **{key: state.get(key, 0) for key in USAGE_KEYS},
     )
