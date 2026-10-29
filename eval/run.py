@@ -9,7 +9,7 @@
   verdict는 매칭/부분 매칭/없음 (docs/판정-기준.md). verdict·citations는 선택이며,
   verdict가 없는 요건은 판정 지표에서 빠진다.
 예측 파일: {"cases": [{"id": ..., "requirements": [...], "matches": [...], "unverified": [...],
-           "blocked_claims", "llm_calls", "elapsed_sec"}]}
+           "blocked_claims", "llm_calls", "input_tokens", "output_tokens", "elapsed_sec"}]}
   eval/predict.py가 /analyze 응답(Report)과 같은 형식으로 만든다.
 
 요건 id는 Parser가 순서대로 붙이므로 정답 id와 대응하지 않는다. 그래서 예측 요건과
@@ -213,6 +213,8 @@ def evaluate(cases: list[dict], threshold: float = DEFAULT_THRESHOLD) -> dict:
         "pipeline": {
             "error_case_ids": [c.get("id") for c in cases if c.get("error")],
             "mean_llm_calls": _mean([c["llm_calls"] for c in cases if "llm_calls" in c]),
+            "mean_input_tokens": _mean([c["input_tokens"] for c in cases if "input_tokens" in c]),
+            "mean_output_tokens": _mean([c["output_tokens"] for c in cases if "output_tokens" in c]),
             "mean_elapsed_sec": _mean([c["elapsed_sec"] for c in cases if "elapsed_sec" in c]),
             "total_blocked_claims": sum(c.get("blocked_claims", 0) for c in cases),
         },

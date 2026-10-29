@@ -19,4 +19,6 @@ class AgentState(TypedDict, total=False):
     attempts: int  # verifier 재생성 시도 횟수 (최대 3)
     blocked_claims: int  # verifier가 차단한 근거 없는 주장 누적 건수
     route: str  # verifier 판정: "retry"면 matcher로 회귀, "done"이면 gap으로 진행
-    llm_calls: int
+    llm_calls: int  # 측정용: LLM 호출 누적 횟수 (JSON 파싱 재시도 포함)
+    input_tokens: int  # 측정용: LLM 입력 토큰 누적
+    output_tokens: int  # 측정용: LLM 출력 토큰 누적

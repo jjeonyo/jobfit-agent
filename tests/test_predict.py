@@ -11,11 +11,12 @@ CHUNKS = [{"id": "chunk-001", "text": "Python FastAPI 백엔드 개발"}]
 
 
 class FakeLLM:
-    def __init__(self, outputs):
+    def __init__(self, outputs, usage=None):
         self.outputs = list(outputs)
+        self.usage = usage
 
     def invoke(self, prompt):
-        return SimpleNamespace(content=self.outputs.pop(0))
+        return SimpleNamespace(content=self.outputs.pop(0), usage_metadata=self.usage)
 
 
 def test_predict_case_records_report_and_elapsed(monkeypatch):
@@ -33,7 +34,7 @@ def test_predict_case_records_report_and_elapsed(monkeypatch):
             ensure_ascii=False,
         ),
     ]
-    llm = FakeLLM(outputs)
+    llm = FakeLLM(outputs, usage={"input_tokens": 50, "output_tokens": 10, "total_tokens": 60})
     monkeypatch.setattr(agents, "_get_llm", lambda: llm)
     monkeypatch.delenv("SUPABASE_URL", raising=False)
     result = predict_case(build_graph(), {"id": "case-01", "posting_text": "공고"}, CHUNKS)
@@ -41,6 +42,7 @@ def test_predict_case_records_report_and_elapsed(monkeypatch):
     assert result["id"] == "case-01"
     assert result["matches"][0]["verdict"] == "매칭"
     assert result["llm_calls"] == 2 and result["blocked_claims"] == 0
+    assert result["input_tokens"] == 100 and result["output_tokens"] == 20
     assert result["elapsed_sec"] >= 0
 
 

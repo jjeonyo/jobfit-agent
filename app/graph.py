@@ -22,6 +22,8 @@ def initial_state(posting_text: str, profile_chunks: list[dict]) -> AgentState:
         "attempts": 0,
         "blocked_claims": 0,
         "llm_calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
     }
 
 

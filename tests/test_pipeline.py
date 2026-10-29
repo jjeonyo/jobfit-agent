@@ -1,6 +1,7 @@
 """그래프 엔드투엔드 테스트. 가짜 LLM으로 실행되며 네트워크를 쓰지 않는다."""
 
 import json
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -28,10 +29,11 @@ REQUIREMENTS = [
 class FakeLLM:
     """프롬프트 종류별로 정해진 응답을 돌려주고, 받은 프롬프트를 기록한다."""
 
-    def __init__(self, matcher_outputs, gap_output=None, parser_output=None):
+    def __init__(self, matcher_outputs, gap_output=None, parser_output=None, usage=None):
         self.matcher_outputs = list(matcher_outputs)
         self.gap_output = gap_output if gap_output is not None else []
         self.parser_output = parser_output if parser_output is not None else REQUIREMENTS
+        self.usage = usage  # 응답마다 붙이는 usage_metadata (None이면 붙이지 않음)
         self.prompts = []
 
     def invoke(self, prompt):
@@ -43,7 +45,7 @@ class FakeLLM:
         else:
             payload = self.gap_output
         content = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
-        return SimpleNamespace(content=content)
+        return SimpleNamespace(content=content, usage_metadata=self.usage)
 
 
 def run(llm, monkeypatch):
@@ -148,6 +150,28 @@ def test_fenced_json_is_parsed(monkeypatch):
     assert report.llm_calls == 3  # 펜스 때문에 재시도하지 않는다
 
 
+def test_token_usage_is_summed_over_all_calls_including_retries(monkeypatch):
+    no_match = [
+        {"requirement_id": r["id"], "verdict": "없음", "citations": []} for r in REQUIREMENTS
+    ]
+    usage = {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120}
+    report = run(FakeLLM(["JSON 아님", no_match], usage=usage), monkeypatch)
+    # parser 1 + matcher 2 (JSON 파싱 재시도) + gap 1
+    assert report.llm_calls == 4
+    assert (report.input_tokens, report.output_tokens) == (400, 80)
+
+
+def test_missing_token_usage_counts_zero_and_warns(monkeypatch, caplog):
+    no_match = [
+        {"requirement_id": r["id"], "verdict": "없음", "citations": []} for r in REQUIREMENTS
+    ]
+    with caplog.at_level(logging.WARNING, logger="app.agents"):
+        report = run(FakeLLM([no_match]), monkeypatch)
+    assert report.llm_calls == 3
+    assert (report.input_tokens, report.output_tokens) == (0, 0)
+    assert "usage_metadata" in caplog.text
+
+
 def test_unparseable_output_raises_after_one_retry():
     llm = FakeLLM([], parser_output="요건은 다음과 같습니다")
     with pytest.raises(agents.LLMOutputError):
@@ -171,6 +195,7 @@ def test_analyze_endpoint_returns_verified_report(monkeypatch):
     body = response.json()
     assert body["unverified"] == [] and body["blocked_claims"] == 0
     assert body["llm_calls"] == 3
+    assert body["input_tokens"] == 0 and body["output_tokens"] == 0
 
 
 def test_analyze_unparseable_llm_output_returns_502(monkeypatch):
