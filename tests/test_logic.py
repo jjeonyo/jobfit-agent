@@ -70,6 +70,21 @@ def test_evaluate_reports_unmatched_gold():
     assert result["per_case"][0]["unmatched_gold_ids"] == ["req-02"]
 
 
+def test_evaluate_reports_mean_token_usage_excluding_error_cases():
+    ok = {"llm_calls": 4, "input_tokens": 1000, "output_tokens": 200, "elapsed_sec": 2.0}
+    result = evaluate(
+        [
+            {"id": "case-01", **ok},
+            {"id": "case-02", **ok, "input_tokens": 3000, "output_tokens": 400},
+            {"id": "case-03", "error": "LLM 호출 실패", "requirements": [], "matches": []},
+        ]
+    )
+    pipeline = result["pipeline"]
+    assert pipeline["error_case_ids"] == ["case-03"]
+    assert pipeline["mean_input_tokens"] == 2000
+    assert pipeline["mean_output_tokens"] == 300
+
+
 def test_citation_rate_counts_only_judged_matches():
     matches = [
         {"requirement_id": "r1", "verdict": "매칭", "citations": ["chunk-001"]},
