@@ -19,12 +19,20 @@ class Requirement(BaseModel):
     text: str
 
 
+class Quote(BaseModel):
+    """판정 근거 문장. 청크 원문에서 글자 그대로 복사한 것이어야 검증을 통과한다."""
+
+    chunk_id: str
+    text: str
+
+
 class Match(BaseModel):
     """요건과 이력서 원문 근거의 대조 결과."""
 
     requirement_id: str
     verdict: Literal["매칭", "부분 매칭", "없음"]
     citations: list[str] = Field(default_factory=list)  # 근거 청크 id 목록
+    quotes: list[Quote] = Field(default_factory=list)  # 인용한 청크마다 근거 문장 1개 이상
     rationale: str = ""
 
 
