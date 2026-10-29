@@ -92,7 +92,7 @@ Gap Planner는 검증을 통과한 판정만 받는다 (설계 결정 기록 참
 5. **없는 경험을 '학습 중'으로만 표기한다.** Gap Planner 프롬프트에 이 규칙이 고정돼 있다.
 6. **'단독' 표현을 쓰지 않는다.** 공동 작업은 '팀원과 공동 개발'로 표기한다.
 
-## 현재 상태 (2026-10-26 기준)
+## 현재 상태 (2026-10-29 기준)
 
 ### 구현 완료
 
@@ -105,7 +105,8 @@ Gap Planner는 검증을 통과한 판정만 받는다 (설계 결정 기록 참
 - Matcher 프롬프트에 판정 기준 반영 (라벨 기준과 같은 문장, 테스트로 일치 확인)
 - Docker Compose, Render Blueprint (`render.yaml`), GitHub Actions CI (테스트 + Docker 빌드)
 - `data/profile.md` 이력서 원문 (민감 정보 제외)
-- 테스트 40개 통과 (LLM·네트워크 없이)
+- 토큰 사용량 집계: 분석 1건의 입력·출력 토큰 수(`input_tokens`, `output_tokens`)를 리포트와 평가 출력에 노출. 실제 OpenAI 응답 형식에서 읽히는지는 가짜 HTTP 응답으로 확인
+- 테스트 43개 통과 (LLM·네트워크 없이)
 
 ### 아직 하지 않은 것 (다음 작업)
 
@@ -184,7 +185,9 @@ docker compose up --build
   "gaps": [{"requirement_id": "req-02", "plan": "..."}],
   "unverified": ["req-03"],
   "blocked_claims": 1,
-  "llm_calls": 4
+  "llm_calls": 4,
+  "input_tokens": 5200,
+  "output_tokens": 900
 }
 ```
 
@@ -192,6 +195,8 @@ docker compose up --build
 - `unverified`는 근거가 없어 표시하지 못한 요건 id 목록이다.
 - `blocked_claims`는 검증 원장이 차단한 근거 없는 주장 건수 (재생성 포함 누적, 측정용).
 - `llm_calls`는 분석 1건당 LLM 호출 횟수 (JSON 파싱 재시도 포함, 측정용).
+- `input_tokens`, `output_tokens`는 분석 1건의 LLM 입력·출력 토큰 합계 (재시도 포함, 측정용).
+  LLM 응답에 토큰 사용량이 없으면 0으로 세고 경고 로그를 남긴다.
 
 에러: 본문 비어 있음 → 400, 공고 20,000자 초과 → 422, `data/profile.md` 없음 → 500,
 LLM 출력 파싱 실패·LLM 호출 실패 → 502, `OPENAI_API_KEY` 없음 → 503.
@@ -210,6 +215,7 @@ python -m eval.run --pred eval/preds.json --gold eval/cases/gold.json [--thresho
 - 지어내기율 = 정답이 '없음'인 요건을 '매칭/부분 매칭'으로 판정한 비율 (목표 0)
 - 인용 정확도 = 정답·예측이 모두 '매칭/부분 매칭'일 때 예측 인용이 정답 인용과 겹치는 비율
 - 혼동행렬 = 정답 판정 × 예측 판정(미검증 포함) 건수. 분모가 0인 지표는 `null`이다.
+- `pipeline` = 케이스 평균 LLM 호출 수·응답 시간·입력/출력 토큰 수와 차단 건수 합계. 오류 케이스는 평균에서 빠진다.
 - 정답 파일 형식은 `eval/cases/example.json`(요건마다 `verdict`·`citations`), 예측 파일은
   `eval/predict.py`가 만든다. 자세한 형식은 `eval/run.py` 독스트링 참조.
 
@@ -231,7 +237,10 @@ python -m eval.run --pred eval/preds.json --gold eval/cases/gold.json [--thresho
 - 판정 정확도 / 지어내기율 / 인용 정확도:
 - 근거 인용률:
 - 지어내기 차단 건수 (Verifier가 잡아낸 건수, 리포트의 `blocked_claims`):
-- 분석 1건당 LLM 호출 횟수 / 응답 시간 / 비용:
+- 분석 1건당 LLM 호출 횟수 / 응답 시간 / 토큰 수(입력·출력) / 비용:
+
+비용 = 평균 입력 토큰 × 입력 단가 + 평균 출력 토큰 × 출력 단가. 단가는 측정 날짜의
+`gpt-4o-mini` 공개 단가를 쓰고, 쓴 단가를 실측 기록에 함께 적는다.
 
 ## 테스트
 
@@ -255,6 +264,8 @@ python -m pytest tests/ -q
 - Day 13–14: 배포 + README 실측값 기재 + 이력서 STAR 문장 작성
 
 하루가 밀리면 다음 날로 넘기지 않고 그날의 Done 기준을 축소한다.
+작업일마다 기능 추가 1건 또는 오류 수정 1건을 끝내는 것을 목표로 한다
+(기준과 기록은 [docs/2주-실행-계획.md](docs/2주-실행-계획.md)의 "작업일 규칙").
 
 ## 설계 결정 기록
 
