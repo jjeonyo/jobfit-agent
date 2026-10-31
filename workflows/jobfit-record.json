@@ -1,0 +1,157 @@
+{
+  "name": "JobFit 분석 기록",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "jobfit-record",
+        "authentication": "headerAuth",
+        "options": {}
+      },
+      "id": "6f0c2d1e-3b4a-4c5d-8e9f-0a1b2c3d4e01",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        200
+      ],
+      "webhookId": "9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c01"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "body.postings",
+        "options": {}
+      },
+      "id": "6f0c2d1e-3b4a-4c5d-8e9f-0a1b2c3d4e02",
+      "name": "postings 행 나누기",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1.1,
+      "position": [
+        260,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "body.predictions",
+        "options": {}
+      },
+      "id": "6f0c2d1e-3b4a-4c5d-8e9f-0a1b2c3d4e03",
+      "name": "predictions 행 나누기",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1.1,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "postings"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "6f0c2d1e-3b4a-4c5d-8e9f-0a1b2c3d4e04",
+      "name": "postings 탭에 추가",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        520,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "predictions"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "6f0c2d1e-3b4a-4c5d-8e9f-0a1b2c3d4e05",
+      "name": "predictions 탭에 추가",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        520,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "postings 행 나누기",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "predictions 행 나누기",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "postings 행 나누기": {
+      "main": [
+        [
+          {
+            "node": "postings 탭에 추가",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "predictions 행 나누기": {
+      "main": [
+        [
+          {
+            "node": "predictions 탭에 추가",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "meta": {},
+  "tags": []
+}
