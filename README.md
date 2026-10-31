@@ -66,10 +66,14 @@ Gap Planner는 검증을 통과한 판정만 받는다 (설계 결정 기록 참
 | `db/supabase.sql` | pgvector 테이블·검색 함수 스키마. Supabase SQL Editor에서 1회 실행한다. |
 | `app/profile.py` | `data/profile.md`를 읽어 근거 청크 목록으로 만든다. 파일이 없으면 템플릿 채우기를 안내하는 에러를 낸다. |
 | `eval/predict.py` | 정답 파일의 공고마다 파이프라인을 실행해 예측 JSON을 만든다 (실제 LLM 호출). |
+| `eval/import_labels.py` | Google Sheets에서 내려받은 CSV(postings·gold 탭)로 `gold.json`을 만든다. 판정 기준 위반 행은 모아서 알리고 파일을 쓰지 않는다. |
+| `app/recording.py` | 분석 기록 전송. `RECORD_WEBHOOK_URL`이 있으면 분석 1건을 시트 행 형식으로 만들어 응답 후 보낸다. 전송 실패는 응답에 영향이 없다. |
+| `workflows/jobfit-record.json` | n8n 워크플로: Webhook(Header Auth) → Split Out → Google Sheets(postings·predictions 탭) 추가. 변환 로직은 없다. |
 | `eval/run.py` | 평가 지표 계산 CLI. 요건 추출 정확도, 근거 인용률, 판정 정확도, 지어내기율, 인용 정확도, 혼동행렬을 낸다. 예측 요건과 정답 요건은 id가 아니라 요건 문장 유사도로 1:1 대응시킨다. |
 | `tests/` | LLM·네트워크 없이 실행되는 테스트. 스키마 검증, 청킹, 평가 지표 수학, 검증 원장 동작, API 키 없을 때 503 반환, 가짜 LLM으로 그래프 엔드투엔드(재생성·unverified·차단 집계), 하이브리드 가중치, Supabase 요청 형식을 확인한다. |
 | `docs/판정-기준.md` | 평가셋 정답 라벨 작성 기준. Matcher 프롬프트의 판정 기준(`VERDICT_RULES`)과 같은 문장이다. |
 | `docs/개선-기록.md` | 발견한 문제·원인·조치·검증 방법·미해결 항목과 실측 기록. 개선 작업은 여기에 먼저 적는다. |
+| `docs/n8n-기록.md` | n8n·Google Sheets 설정, 정답 라벨 작성 순서, `gold.json` 만들기. |
 | `docs/작업-일지.md` | 작업일별로 한 일·결과물·검증·결정 대기 항목을 기록한다. 최신 날짜가 위에 있다. |
 | `render.yaml`, `.github/workflows/ci.yml` | Render 배포 Blueprint, CI (테스트 + Docker 빌드). |
 
@@ -108,17 +112,18 @@ Gap Planner는 검증을 통과한 판정만 받는다 (설계 결정 기록 참
 - 벡터 검색 백엔드 (Supabase pgvector) — 요청 형식은 테스트로 확인, 실제 Supabase 인스턴스 연결은 미확인
 - 웹 UI (`GET /`) — 가짜 LLM 응답으로 데스크톱·모바일 렌더링 확인
 - 평가: 예측 생성 (`eval/predict.py`), 지표 계산 (`eval/run.py` — 판정 정확도·지어내기율·혼동행렬 포함), 정답 템플릿 (`eval/cases/example.json`), 판정 기준 (`docs/판정-기준.md`)
+- 평가셋 수집: 분석 기록을 n8n으로 Google Sheets에 쌓고, 시트에서 단 라벨을 `gold.json`으로 변환 (`docs/n8n-기록.md`) — 실제 n8n·Google Sheets 연결은 미확인
 - Matcher 프롬프트에 판정 기준 반영 (라벨 기준과 같은 문장, 테스트로 일치 확인)
 - Docker Compose, Render Blueprint (`render.yaml`), GitHub Actions CI (테스트 + Docker 빌드)
 - `data/profile.md` 이력서 원문 (민감 정보 제외)
 - 토큰 사용량 집계: 분석 1건의 입력·출력 토큰 수(`input_tokens`, `output_tokens`)를 리포트와 평가 출력에 노출. 실제 OpenAI 응답 형식에서 읽히는지는 가짜 HTTP 응답으로 확인
-- 테스트 59개 통과 (LLM·네트워크 없이)
+- 테스트 76개 통과 (LLM·네트워크 없이)
 
 ### 아직 하지 않은 것 (다음 작업)
 
 - 실제 OpenAI 키로 엔드투엔드 실행: 지금까지는 가짜 LLM으로만 실행했다.
 - 배포: `render.yaml`은 준비돼 있다. Render 계정에서 Blueprint를 연결하고 키를 입력해야 한다.
-- 실제 평가셋 20건: 실제 공고 + 요건·판정 정답 라벨 직접 작성 (`docs/판정-기준.md`).
+- 실제 평가셋 20건: 실제 공고 + 요건·판정 정답 라벨 직접 작성 (`docs/판정-기준.md`, 수집 방법은 `docs/n8n-기록.md`).
 - 기준선 측정: 평가셋으로 `eval.predict` → `eval.run`을 실행해 첫 실측값을 기록한다.
 - 미해결 문제와 대응 후보는 [docs/개선-기록.md](docs/개선-기록.md) 참조 (근거 문장이 원문에 있지만 요건과 무관한 경우는 아직 못 잡는다 — P9, 근거 문장 검사의 과잉 차단 감시 — P14 등).
 
@@ -139,6 +144,8 @@ uvicorn app.main:app --reload
 
 ```bash
 docker compose up --build
+# 분석 기록(n8n)까지 띄울 때. 설정은 docs/n8n-기록.md
+docker compose --profile record up --build
 ```
 
 ### 환경 변수
@@ -147,6 +154,7 @@ docker compose up --build
 | --- | --- | --- |
 | `OPENAI_API_KEY` | 필수 | 없으면 `/analyze`가 503을 반환한다 (지어낸 리포트 금지). |
 | `SUPABASE_URL`, `SUPABASE_KEY` | 선택 | 둘 다 있으면 벡터 검색을 켠다. `db/supabase.sql`을 먼저 실행하고, 키는 service_role 키(서버 전용)를 쓴다. 비워두면 키워드 검색만 쓴다. |
+| `RECORD_WEBHOOK_URL`, `RECORD_WEBHOOK_TOKEN` | 선택 | 분석 기록을 보낼 n8n Webhook 주소와 `X-JobFit-Token` 헤더 값. 비워두면 기록하지 않는다 (`docs/n8n-기록.md`). |
 
 ### 배포 (Render)
 
@@ -212,7 +220,10 @@ LLM 출력 파싱 실패·LLM 호출 실패 → 502, `OPENAI_API_KEY` 없음 →
 
 ## 평가 방법
 
+정답 파일은 Google Sheets에 쌓은 분석 기록에 라벨을 달아 만든다 (`docs/n8n-기록.md`).
+
 ```bash
+python -m eval.import_labels --postings postings.csv --gold gold.csv --out eval/cases/gold.json
 python -m eval.predict --gold eval/cases/gold.json --out eval/preds.json   # OPENAI_API_KEY 필요
 python -m eval.run --pred eval/preds.json --gold eval/cases/gold.json [--threshold 0.5]
 ```
@@ -293,6 +304,12 @@ python -m pytest tests/ -q
 - **존재하지 않는 청크 인용도 차단**: 인용이 비어 있지 않아도 현재 이력서에 없는
   청크 id를 인용하면 지어낸 인용이다. 하나라도 섞이면 판정 전체를 차단한다.
 - **1인 사용·로그인 없음**: 2주 안에 배포까지 가기 위한 범위 축소 결정이다.
+- **분석 기록은 n8n + Google Sheets, 변환 로직은 Python**: Zapier 대신 n8n을 쓴다.
+  직접 띄울 수 있어 기존 Docker Compose에 붙고, 워크플로를 JSON으로 저장소에 둘 수 있다.
+  시트 행 형식은 `app/recording.py`에서 만들고 테스트하며, 워크플로는 행을 추가만 한다.
+  n8n에 LLM 호출이나 판정 로직을 두지 않는다 (검증 원장 우회 방지).
+- **정답 요건은 예측과 독립적으로 작성**: 예측 요건을 정답 칸에 미리 채우지 않는다.
+  채우면 정답이 예측과 같아져 요건 추출 정확도가 부풀려진다.
 
 ## 이어받을 때 가장 먼저 할 일
 
